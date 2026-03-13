@@ -1,0 +1,134 @@
+#!/bin/bash
+# =============================================================================
+# scan-to-paperless
+# Scan documents from Fujitsu ScanSnap iX500 to paperless-consume directory
+#
+# Author:  Kalle Hagen <gharac@flightsim.li>
+#
+# Copyright (c) 2026 Kalle Hagen
+#
+# This work is licensed under the Creative Commons
+# Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+#
+# You are free to:
+#   - Share: copy and redistribute the material in any medium or format
+#   - Adapt: remix, transform, and build upon the material
+#
+# Under the following terms:
+#   - Attribution: You must give appropriate credit.
+#   - NonCommercial: You may not use the material for commercial purposes.
+#
+# Full license text: https://creativecommons.org/licenses/by-nc/4.0/legalcode
+# =============================================================================
+#
+# Usage:
+#   scan-to-paperless                  # Duplex, Color, 300dpi (default)
+#   scan-to-paperless -s simplex       # Single-sided scan
+#   scan-to-paperless -m Gray          # Grayscale scan
+#   scan-to-paperless -m Lineart       # Black & white (smallest file size)
+#   scan-to-paperless -r 200           # Lower resolution (saves space)
+#   scan-to-paperless -n "invoice"     # Custom filename prefix
+#
+# Examples:
+#   scan-to-paperless -m Lineart -r 150              # Text-only docs, minimal size
+#   scan-to-paperless -m Gray -r 200                  # Letters, forms (good balance)
+#   scan-to-paperless -m Gray -r 200 -s simplex       # Single-sided grayscale
+#   scan-to-paperless -r 600 -n "photo"               # High-res color photo scan
+#   scan-to-paperless -m Color -r 300 -n "receipt"    # Colored receipts (default quality)
+
+set -euo pipefail
+
+DEVICE="fujitsu:ScanSnap iX500:5085"
+CONSUME_DIR="$HOME/paperless-consume"
+RESOLUTION=300
+MODE="Color"
+SOURCE="ADF Duplex"
+PREFIX="scan"
+
+usage() {
+    echo "Usage: scan-to-paperless [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -s simplex|duplex   Scan mode (default: duplex)"
+    echo "  -m Color|Gray|Lineart  Color mode (default: Color)"
+    echo "  -r RESOLUTION       DPI resolution 50-600 (default: 300)"
+    echo "  -n PREFIX           Filename prefix (default: scan)"
+    echo "  -h                  Show this help"
+    echo ""
+    echo "Examples:"
+    echo "  scan-to-paperless -m Lineart -r 150            Text-only docs, minimal file size"
+    echo "  scan-to-paperless -m Gray -r 200               Letters, forms (good quality/size balance)"
+    echo "  scan-to-paperless -m Gray -r 200 -s simplex    Single-sided grayscale"
+    echo "  scan-to-paperless -r 600 -n \"photo\"             High-res color photo scan"
+    echo "  scan-to-paperless -m Color -r 300 -n \"receipt\"  Colored receipts (default quality)"
+    exit 0
+}
+
+while getopts "s:m:r:n:h" opt; do
+    case $opt in
+        s)
+            case "${OPTARG,,}" in
+                simplex|front) SOURCE="ADF Front" ;;
+                duplex)        SOURCE="ADF Duplex" ;;
+                back)          SOURCE="ADF Back" ;;
+                *) echo "Error: Unknown source '$OPTARG'"; exit 1 ;;
+            esac
+            ;;
+        m) MODE="$OPTARG" ;;
+        r) RESOLUTION="$OPTARG" ;;
+        n) PREFIX="$OPTARG" ;;
+        h) usage ;;
+        *) usage ;;
+    esac
+done
+
+# Ensure consume directory exists
+mkdir -p "$CONSUME_DIR"
+
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+OUTFILE="${CONSUME_DIR}/${PREFIX}_${TIMESTAMP}.pdf"
+
+echo "=== ScanSnap iX500 → Paperless ==="
+echo "Mode:       $MODE"
+echo "Source:     $SOURCE"
+echo "Resolution: ${RESOLUTION}dpi"
+echo "Output:     $OUTFILE"
+echo ""
+echo "Place document(s) in the feeder and press Enter..."
+read -r
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+echo "Scanning all pages from ADF..."
+# Use --batch to keep device open between pages (essential for ADF multi-page)
+# scanimage returns non-zero when ADF is empty - this is expected
+scanimage \
+    --device-name="$DEVICE" \
+    --source="$SOURCE" \
+    --mode="$MODE" \
+    --resolution="$RESOLUTION" \
+    --page-height=297 \
+    -y 297 \
+    --format=tiff \
+    --batch="$TMPDIR/page_%04d.tiff" \
+    --progress \
+    2>&1 || true
+
+# Remove any empty files (last page from ADF-empty signal)
+find "$TMPDIR" -name "*.tiff" -empty -delete
+
+PAGES=("$TMPDIR"/page_*.tiff)
+
+if [[ ! -f "${PAGES[0]:-}" ]]; then
+    echo "Error: No pages scanned."
+    exit 1
+fi
+
+echo ""
+echo "${#PAGES[@]} page(s) scanned. Creating PDF..."
+img2pdf --output "$OUTFILE" "${PAGES[@]}"
+
+FILESIZE=$(du -h "$OUTFILE" | cut -f1)
+echo "Done! Saved: $OUTFILE ($FILESIZE)"
+echo "Paperless-ngx will pick it up automatically."
