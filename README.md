@@ -21,23 +21,13 @@ SANE provides the backend for scanner communication.
 sudo pacman -S sane
 ```
 
-### 2. Fujitsu ScanSnap iX500 firmware
+### 2. No firmware needed
 
-The iX500 requires proprietary firmware blobs that are not included in SANE. Install the `sane-airscan` package (for network scanning) or the firmware package from the AUR:
-
-```bash
-# AUR package with Fujitsu firmware files
-yay -S sane-airscan
-
-# Alternatively, for USB-only with the classic SANE Fujitsu backend:
-yay -S pfufs-scansnap-ix500
-```
-
-> **Note:** The firmware file `1300_0C26.nal` must be present in `/usr/share/sane/epjitsu/` for USB mode. The AUR package handles this automatically.
+The iX500 is driven by SANE's built-in `fujitsu` backend over USB. It does **not** need any firmware files or AUR packages (the firmware-based `epjitsu` backend is only for older models such as the S300/S1300/S1100).
 
 ### 3. img2pdf
 
-Used to combine scanned TIFF pages into a single PDF without re-encoding (lossless).
+Used to combine the scanned pages (JPEG for Color/Gray, TIFF for Lineart) into a single PDF without re-encoding.
 
 ```bash
 sudo pacman -S img2pdf
@@ -66,18 +56,19 @@ scanimage -L
 ```
 
 If the scanner is not found, check:
+- The paper chute (top lid) is open — the iX500 only powers on and shows up on USB while it is open (blue button lit)
 - USB cable connection
 - `lsusb` should show `04c5:132b` (Fujitsu iX500)
-- Firmware is installed correctly
 - User is in the `scanner` group
+
+If `scanimage -L` reports a different device name (e.g. a different number after `iX500:`), adjust `DEVICE=` at the top of the script.
 
 ### Summary of required packages
 
 | Package | Source | Purpose |
 |---------|--------|---------|
 | `sane` | pacman | Scanner backend (scanimage) |
-| `img2pdf` | pacman | Lossless TIFF → PDF conversion |
-| `pfufs-scansnap-ix500` or `sane-airscan` | AUR | Fujitsu firmware / driver |
+| `img2pdf` | pacman | Pages → PDF without re-encoding |
 
 ## Installation
 
@@ -86,8 +77,11 @@ If the scanner is not found, check:
 cp scan-to-paperless ~/bin/
 chmod +x ~/bin/scan-to-paperless
 
-# Make sure ~/bin is in your PATH (add to ~/.bashrc or ~/.config/fish/config.fish)
+# Make sure ~/bin is in your PATH
+# bash (add to ~/.bashrc):
 export PATH="$HOME/bin:$PATH"
+# fish (run once, persists):
+fish_add_path ~/bin
 ```
 
 ## Usage
@@ -139,8 +133,10 @@ scan-to-paperless -m Color -r 300 -n "receipt"
 ## How it works
 
 1. The script calls `scanimage` with the configured options to scan all pages from the ADF
-2. Each page is saved as a TIFF file in a temporary directory
-3. `img2pdf` combines all pages into a single PDF (lossless, no re-encoding)
+2. Each page is saved in a temporary directory — as JPEG for Color/Gray, as 1-bit TIFF for Lineart
+3. `img2pdf` combines all pages into a single PDF, embedding the pages as-is (no re-encoding)
+
+> **Why JPEG for Color/Gray?** Uncompressed TIFF pages get Flate-compressed by `img2pdf`, which barely shrinks scanner noise. A duplex Gray 200 dpi scan dropped from ~5 MB to ~1.1 MB after switching to JPEG.
 4. The PDF is placed in `~/paperless-consume/`
 5. Paperless-ngx automatically detects and ingests the new file
 
