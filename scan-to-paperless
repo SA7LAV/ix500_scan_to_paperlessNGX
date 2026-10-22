@@ -100,6 +100,17 @@ read -r
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
+# File format per mode, chosen for small PDFs:
+#   Color/Gray -> JPEG (img2pdf embeds it as-is, no re-encoding)
+#   Lineart    -> TIFF (1-bit, already tiny after img2pdf's Flate compression)
+# Color/Gray as uncompressed TIFF would be Flate-compressed by img2pdf,
+# which barely shrinks scanner noise (~2.5 MB per Gray page at 200 dpi).
+if [[ "${MODE,,}" == "lineart" ]]; then
+    FORMAT="tiff"; EXT="tiff"
+else
+    FORMAT="jpeg"; EXT="jpg"
+fi
+
 echo "Scanning all pages from ADF..."
 # Use --batch to keep device open between pages (essential for ADF multi-page)
 # scanimage returns non-zero when ADF is empty - this is expected
@@ -110,15 +121,15 @@ scanimage \
     --resolution="$RESOLUTION" \
     --page-height=297 \
     -y 297 \
-    --format=tiff \
-    --batch="$TMPDIR/page_%04d.tiff" \
+    --format="$FORMAT" \
+    --batch="$TMPDIR/page_%04d.$EXT" \
     --progress \
     2>&1 || true
 
 # Remove any empty files (last page from ADF-empty signal)
-find "$TMPDIR" -name "*.tiff" -empty -delete
+find "$TMPDIR" -name "page_*.$EXT" -empty -delete
 
-PAGES=("$TMPDIR"/page_*.tiff)
+PAGES=("$TMPDIR"/page_*."$EXT")
 
 if [[ ! -f "${PAGES[0]:-}" ]]; then
     echo "Error: No pages scanned."
